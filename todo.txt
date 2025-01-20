@@ -1,0 +1,9 @@
+#Things to add:
+
+
+
+#Ability to target 32/64 bit
+#Config file for manipulation of dev environments,
+#Ability to build out DB schemas,
+#Capability to generate JavaC makefiles
+ 
