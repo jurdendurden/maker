@@ -8,6 +8,7 @@ A powerful Python tool for generating build systems (Makefiles and CMake files) 
 - **Multi-language support**: Generate build files for C, C++, and Java projects
 - **Dual build systems**: Support for both traditional Makefiles and CMake
 - **Advanced Java support**: Enterprise-grade Java Makefiles with dependency management
+- **Database schema generation**: Generate MySQL/MariaDB schemas from code structures
 - **Architecture targeting**: 32-bit, 64-bit, or native compilation support
 - **Project templates**: Create new projects with sample files and structure
 - **Source file discovery**: Automatically finds and organizes source files
@@ -32,6 +33,15 @@ A powerful Python tool for generating build systems (Makefiles and CMake files) 
 - **Package structure handling**: Proper handling of Java package hierarchies
 - **Advanced compiler options**: Configurable JavaC flags and optimizations
 - **Dependency installation**: Integrated dependency management workflow
+
+### 🗄️ **Database Schema Generation**
+- **Code structure analysis**: Parse C structs, C++ classes, and Java classes
+- **MySQL/MariaDB support**: Generate production-ready DDL scripts
+- **Intelligent type mapping**: Convert programming language types to SQL types
+- **Constraint support**: Primary keys, foreign keys, and NOT NULL constraints
+- **Sample data generation**: Optional INSERT statements for testing
+- **Database creation**: Complete database setup with proper charset and collation
+- **Extensible architecture**: Designed for easy addition of other database types
 
 ## Installation
 
@@ -93,6 +103,14 @@ A powerful Python tool for generating build systems (Makefiles and CMake files) 
 - Persistent configuration settings
 - Customizable compiler flags
 - Default preferences setup
+
+#### 7. Generate Database Schema
+- Analyzes C structures, C++ classes, and Java classes
+- Generates MySQL/MariaDB DDL scripts
+- Intelligent type mapping from code to SQL
+- Supports primary keys, foreign keys, and constraints
+- Optional sample data generation
+- Complete database setup with proper configuration
 
 ## Configuration
 
@@ -309,6 +327,58 @@ help:
 .PHONY: all compile jar run run-jar clean rebuild info install-deps src-package help
 ```
 
+### Generated Database Schema (MySQL/MariaDB)
+
+**Input C Structure:**
+```c
+typedef struct {
+    int user_id;
+    char* username;
+    char* email;
+    int age;
+    bool is_active;
+} User;
+
+typedef struct {
+    int product_id;
+    char* name;
+    double price;
+    int quantity;
+    char* description;
+} Product;
+```
+
+**Generated SQL Output:**
+```sql
+-- Database: myproject_db
+CREATE DATABASE IF NOT EXISTS `myproject_db`;
+USE `myproject_db`;
+
+-- Table: user
+-- Generated from C struct User
+CREATE TABLE IF NOT EXISTS `user` (
+    `user_id` INT,
+    `username` VARCHAR(255),
+    `email` VARCHAR(255),
+    `age` INT,
+    `is_active` BOOLEAN
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Table: product
+-- Generated from C struct Product
+CREATE TABLE IF NOT EXISTS `product` (
+    `product_id` INT,
+    `name` VARCHAR(255),
+    `price` DOUBLE,
+    `quantity` INT,
+    `description` VARCHAR(255)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Sample INSERT statements
+INSERT INTO `user` (`user_id`, `username`, `email`, `age`, `is_active`) VALUES (1, 'sample_username', 'sample_email', 1, TRUE);
+INSERT INTO `product` (`product_id`, `name`, `price`, `quantity`, `description`) VALUES (1, 'sample_name', 1.0, 1, 'sample_description');
+```
+
 ## Build Instructions
 
 ### Using Generated Makefile
@@ -473,6 +543,18 @@ project/
 This project is open source. See the LICENSE file for details.
 
 ## Changelog
+
+### Version 2.2
+- Added database schema generation from code structures
+- Support for MySQL/MariaDB database schema generation
+- C struct parsing for database table generation
+- C++ class parsing for database table generation  
+- Java class parsing for database table generation
+- Intelligent type mapping from programming languages to SQL types
+- Primary key and foreign key constraint support
+- Optional sample data generation
+- Complete DDL script generation with proper database configuration
+- Extensible architecture for future database type support
 
 ### Version 2.1
 - Added advanced Java makefile generation
