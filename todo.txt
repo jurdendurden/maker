@@ -1,3 +1,0 @@
-#Things to add:
-
-#Ability to build out DB schemas,
