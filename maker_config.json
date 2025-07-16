@@ -1,0 +1,12 @@
+{
+  "default_architecture": "64",
+  "default_compiler_flags": {
+    "C": "-Wall -Wextra -O2",
+    "C++": "-Wall -Wextra -O2 -std=c++17",
+    "Java": "-Xlint:all"
+  },
+  "default_project_dir": "new_project",
+  "custom_flags": {},
+  "preferred_build_system": "make",
+  "auto_create_directories": true
+}
