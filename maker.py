@@ -42,6 +42,7 @@ import glob
 import sys
 import time
 import json
+import re
 from typing import Tuple, List, Dict, Any
 
 def clear_screen():
@@ -698,6 +699,526 @@ help:
     # Create lib directory for external JARs
     os.makedirs('lib', exist_ok=True)
 
+# Database Schema Generation System
+class DatabaseType:
+    """Enumeration of supported database types for schema generation."""
+    MYSQL = "mysql"
+    MARIADB = "mariadb"
+    # Future: POSTGRESQL = "postgresql", SQLITE = "sqlite", etc.
+
+class DataType:
+    """Represents a data type with language-specific mapping to SQL types."""
+    def __init__(self, name: str, size: int = None, nullable: bool = True):
+        self.name = name
+        self.size = size
+        self.nullable = nullable
+    
+    def __str__(self):
+        return f"{self.name}{'(' + str(self.size) + ')' if self.size else ''}{'NULL' if self.nullable else 'NOT NULL'}"
+
+class Field:
+    """Represents a field/column in a database table."""
+    def __init__(self, name: str, data_type: DataType, is_primary_key: bool = False, 
+                 is_foreign_key: bool = False, foreign_table: str = None, 
+                 default_value: str = None, comment: str = None):
+        self.name = name
+        self.data_type = data_type
+        self.is_primary_key = is_primary_key
+        self.is_foreign_key = is_foreign_key
+        self.foreign_table = foreign_table
+        self.default_value = default_value
+        self.comment = comment
+
+class Table:
+    """Represents a database table with fields and metadata."""
+    def __init__(self, name: str, fields: List[Field], comment: str = None):
+        self.name = name
+        self.fields = fields
+        self.comment = comment
+
+class CodeStructureParser:
+    """Parser for extracting database schema information from code structures."""
+    
+    @staticmethod
+    def parse_c_structs(file_path: str) -> List[Table]:
+        """
+        Parse C structures from header files to extract table definitions.
+        
+        Args:
+            file_path (str): Path to the C header file
+            
+        Returns:
+            List[Table]: List of table definitions extracted from structs
+        """
+        tables = []
+        
+        try:
+            with open(file_path, 'r') as f:
+                content = f.read()
+            
+            # Simple regex to find struct definitions
+            import re
+            struct_pattern = r'typedef\s+struct\s*{([^}]+)}\s*(\w+);'
+            
+            for match in re.finditer(struct_pattern, content, re.DOTALL):
+                struct_body = match.group(1).strip()
+                struct_name = match.group(2)
+                
+                fields = []
+                for line in struct_body.split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith('//') and not line.startswith('/*'):
+                        # Parse field definition
+                        field = CodeStructureParser._parse_c_field(line)
+                        if field:
+                            fields.append(field)
+                
+                if fields:
+                    tables.append(Table(struct_name.lower(), fields, f"Generated from C struct {struct_name}"))
+                    
+        except Exception as e:
+            print(f"Error parsing C structs from {file_path}: {e}")
+            
+        return tables
+    
+    @staticmethod
+    def _parse_c_field(line: str) -> Field:
+        """Parse a single C struct field line."""
+        import re
+        
+        # Remove semicolon and clean up
+        line = line.rstrip(';').strip()
+        
+        # Basic field parsing (type name)
+        parts = line.split()
+        if len(parts) >= 2:
+            c_type = parts[0]
+            field_name = parts[1]
+            
+            # Map C types to SQL types
+            sql_type = CodeStructureParser._map_c_type_to_sql(c_type)
+            
+            return Field(field_name, sql_type)
+        
+        return None
+    
+    @staticmethod
+    def _map_c_type_to_sql(c_type: str) -> DataType:
+        """Map C data types to SQL data types."""
+        type_mapping = {
+            'int': DataType('INT'),
+            'long': DataType('BIGINT'),
+            'short': DataType('SMALLINT'),
+            'char': DataType('CHAR', 1),
+            'float': DataType('FLOAT'),
+            'double': DataType('DOUBLE'),
+            'char*': DataType('VARCHAR', 255),
+            'bool': DataType('BOOLEAN'),
+            'unsigned int': DataType('INT UNSIGNED'),
+            'unsigned long': DataType('BIGINT UNSIGNED'),
+        }
+        
+        return type_mapping.get(c_type, DataType('TEXT'))
+    
+    @staticmethod
+    def parse_cpp_classes(file_path: str) -> List[Table]:
+        """
+        Parse C++ classes from header files to extract table definitions.
+        
+        Args:
+            file_path (str): Path to the C++ header file
+            
+        Returns:
+            List[Table]: List of table definitions extracted from classes
+        """
+        tables = []
+        
+        try:
+            with open(file_path, 'r') as f:
+                content = f.read()
+            
+            import re
+            # Find class definitions
+            class_pattern = r'class\s+(\w+)\s*{([^}]+)}'
+            
+            for match in re.finditer(class_pattern, content, re.DOTALL):
+                class_name = match.group(1)
+                class_body = match.group(2).strip()
+                
+                fields = []
+                for line in class_body.split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith('//') and not line.startswith('/*'):
+                        # Look for member variables (skip methods)
+                        if ';' in line and '(' not in line:
+                            field = CodeStructureParser._parse_cpp_field(line)
+                            if field:
+                                fields.append(field)
+                
+                if fields:
+                    tables.append(Table(class_name.lower(), fields, f"Generated from C++ class {class_name}"))
+                    
+        except Exception as e:
+            print(f"Error parsing C++ classes from {file_path}: {e}")
+            
+        return tables
+    
+    @staticmethod
+    def _parse_cpp_field(line: str) -> Field:
+        """Parse a single C++ class member variable line."""
+        import re
+        
+        # Remove access specifiers and clean up
+        line = re.sub(r'(public|private|protected):', '', line)
+        line = line.rstrip(';').strip()
+        
+        # Skip static, const, and other modifiers for now
+        if 'static' in line or 'const' in line or '(' in line:
+            return None
+            
+        parts = line.split()
+        if len(parts) >= 2:
+            cpp_type = parts[0]
+            field_name = parts[1]
+            
+            # Map C++ types to SQL types
+            sql_type = CodeStructureParser._map_cpp_type_to_sql(cpp_type)
+            
+            return Field(field_name, sql_type)
+        
+        return None
+    
+    @staticmethod
+    def _map_cpp_type_to_sql(cpp_type: str) -> DataType:
+        """Map C++ data types to SQL data types."""
+        type_mapping = {
+            'int': DataType('INT'),
+            'long': DataType('BIGINT'),
+            'short': DataType('SMALLINT'),
+            'char': DataType('CHAR', 1),
+            'float': DataType('FLOAT'),
+            'double': DataType('DOUBLE'),
+            'string': DataType('VARCHAR', 255),
+            'std::string': DataType('VARCHAR', 255),
+            'bool': DataType('BOOLEAN'),
+            'unsigned': DataType('INT UNSIGNED'),
+            'size_t': DataType('BIGINT UNSIGNED'),
+        }
+        
+        return type_mapping.get(cpp_type, DataType('TEXT'))
+    
+    @staticmethod
+    def parse_java_classes(file_path: str) -> List[Table]:
+        """
+        Parse Java classes to extract table definitions.
+        
+        Args:
+            file_path (str): Path to the Java source file
+            
+        Returns:
+            List[Table]: List of table definitions extracted from classes
+        """
+        tables = []
+        
+        try:
+            with open(file_path, 'r') as f:
+                content = f.read()
+            
+            import re
+            # Find class definitions
+            class_pattern = r'public\s+class\s+(\w+)\s*{([^}]+)}'
+            
+            for match in re.finditer(class_pattern, content, re.DOTALL):
+                class_name = match.group(1)
+                class_body = match.group(2).strip()
+                
+                fields = []
+                for line in class_body.split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith('//') and not line.startswith('/*'):
+                        # Look for field declarations
+                        if ';' in line and '(' not in line and not line.startswith('public') and not line.startswith('private'):
+                            field = CodeStructureParser._parse_java_field(line)
+                            if field:
+                                fields.append(field)
+                
+                if fields:
+                    tables.append(Table(class_name.lower(), fields, f"Generated from Java class {class_name}"))
+                    
+        except Exception as e:
+            print(f"Error parsing Java classes from {file_path}: {e}")
+            
+        return tables
+    
+    @staticmethod
+    def _parse_java_field(line: str) -> Field:
+        """Parse a single Java class field line."""
+        import re
+        
+        # Remove modifiers and clean up
+        line = re.sub(r'(public|private|protected|static|final)', '', line)
+        line = line.rstrip(';').strip()
+        
+        parts = line.split()
+        if len(parts) >= 2:
+            java_type = parts[0]
+            field_name = parts[1]
+            
+            # Map Java types to SQL types
+            sql_type = CodeStructureParser._map_java_type_to_sql(java_type)
+            
+            return Field(field_name, sql_type)
+        
+        return None
+    
+    @staticmethod
+    def _map_java_type_to_sql(java_type: str) -> DataType:
+        """Map Java data types to SQL data types."""
+        type_mapping = {
+            'int': DataType('INT'),
+            'Integer': DataType('INT'),
+            'long': DataType('BIGINT'),
+            'Long': DataType('BIGINT'),
+            'short': DataType('SMALLINT'),
+            'Short': DataType('SMALLINT'),
+            'char': DataType('CHAR', 1),
+            'Character': DataType('CHAR', 1),
+            'float': DataType('FLOAT'),
+            'Float': DataType('FLOAT'),
+            'double': DataType('DOUBLE'),
+            'Double': DataType('DOUBLE'),
+            'String': DataType('VARCHAR', 255),
+            'boolean': DataType('BOOLEAN'),
+            'Boolean': DataType('BOOLEAN'),
+            'byte': DataType('TINYINT'),
+            'Byte': DataType('TINYINT'),
+            'BigDecimal': DataType('DECIMAL', 10),
+            'Date': DataType('DATE'),
+            'Timestamp': DataType('TIMESTAMP'),
+        }
+        
+        return type_mapping.get(java_type, DataType('TEXT'))
+
+class SQLGenerator:
+    """Generator for SQL DDL statements from table definitions."""
+    
+    @staticmethod
+    def generate_mysql_schema(tables: List[Table], database_name: str = None) -> str:
+        """
+        Generate MySQL/MariaDB schema SQL from table definitions.
+        
+        Args:
+            tables (List[Table]): List of table definitions
+            database_name (str, optional): Name of the database
+            
+        Returns:
+            str: Complete SQL DDL script
+        """
+        sql_lines = []
+        
+        # Database creation
+        if database_name:
+            sql_lines.append(f"-- Database: {database_name}")
+            sql_lines.append(f"CREATE DATABASE IF NOT EXISTS `{database_name}`;")
+            sql_lines.append(f"USE `{database_name}`;")
+            sql_lines.append("")
+        
+        # Table creation
+        for table in tables:
+            sql_lines.append(f"-- Table: {table.name}")
+            if table.comment:
+                sql_lines.append(f"-- {table.comment}")
+            
+            sql_lines.append(f"CREATE TABLE IF NOT EXISTS `{table.name}` (")
+            
+            # Fields
+            field_lines = []
+            for field in table.fields:
+                field_sql = SQLGenerator._generate_mysql_field(field)
+                field_lines.append(f"    {field_sql}")
+            
+            # Primary keys
+            primary_keys = [f.name for f in table.fields if f.is_primary_key]
+            if primary_keys:
+                field_lines.append(f"    PRIMARY KEY (`{'`, `'.join(primary_keys)}`)")
+            
+            # Foreign keys
+            for field in table.fields:
+                if field.is_foreign_key and field.foreign_table:
+                    field_lines.append(f"    FOREIGN KEY (`{field.name}`) REFERENCES `{field.foreign_table}`(`{field.name}`)")
+            
+            sql_lines.append(",\n".join(field_lines))
+            sql_lines.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;")
+            sql_lines.append("")
+        
+        return "\n".join(sql_lines)
+    
+    @staticmethod
+    def _generate_mysql_field(field: Field) -> str:
+        """Generate MySQL field definition."""
+        field_sql = f"`{field.name}` {field.data_type.name}"
+        
+        if field.data_type.size:
+            field_sql += f"({field.data_type.size})"
+        
+        if not field.data_type.nullable:
+            field_sql += " NOT NULL"
+        
+        if field.default_value:
+            field_sql += f" DEFAULT {field.default_value}"
+        
+        if field.is_primary_key:
+            field_sql += " AUTO_INCREMENT"
+        
+        if field.comment:
+            field_sql += f" COMMENT '{field.comment}'"
+        
+        return field_sql
+
+def get_database_options() -> Dict[str, Any]:
+    """
+    Get database schema generation options from user input.
+    
+    Returns:
+        Dict[str, Any]: Database configuration options
+    """
+    print("\n" + "=" * 60)
+    print("Database Schema Generation Configuration")
+    print("=" * 60)
+    
+    options = {}
+    
+    # Database type
+    print("\nSelect database type:")
+    print("1. MySQL")
+    print("2. MariaDB")
+    
+    while True:
+        db_choice = input("Choice [1]: ").strip()
+        if not db_choice or db_choice == '1':
+            options['db_type'] = DatabaseType.MYSQL
+            break
+        elif db_choice == '2':
+            options['db_type'] = DatabaseType.MARIADB
+            break
+        else:
+            print("Invalid choice! Please enter 1 or 2.")
+    
+    # Database name
+    db_name = input("Enter database name [myproject_db]: ").strip()
+    options['database_name'] = db_name if db_name else 'myproject_db'
+    
+    # Language selection
+    print("\nSelect source language:")
+    print("1. C (parse structs from .h files)")
+    print("2. C++ (parse classes from .hpp/.h files)")
+    print("3. Java (parse classes from .java files)")
+    
+    while True:
+        lang_choice = input("Choice [1]: ").strip()
+        if not lang_choice or lang_choice == '1':
+            options['language'] = 'C'
+            break
+        elif lang_choice == '2':
+            options['language'] = 'C++'
+            break
+        elif lang_choice == '3':
+            options['language'] = 'Java'
+            break
+        else:
+            print("Invalid choice! Please enter 1, 2, or 3.")
+    
+    # Output file
+    output_file = input("Enter output SQL file name [schema.sql]: ").strip()
+    options['output_file'] = output_file if output_file else 'schema.sql'
+    
+    # Include sample data
+    include_sample = input("Include sample INSERT statements? [y/N]: ").strip().lower()
+    options['include_sample_data'] = include_sample in ['y', 'yes']
+    
+    return options
+
+def generate_database_schema(options: Dict[str, Any]):
+    """
+    Generate database schema from code structures.
+    
+    Args:
+        options (Dict[str, Any]): Database generation options
+    """
+    print(f"\nGenerating {options['db_type']} schema from {options['language']} code...")
+    
+    # Discover source files
+    if options['language'] == 'C':
+        source_files = glob.glob("**/*.h", recursive=True)
+    elif options['language'] == 'C++':
+        source_files = glob.glob("**/*.hpp", recursive=True) + glob.glob("**/*.h", recursive=True)
+    else:  # Java
+        source_files = glob.glob("**/*.java", recursive=True)
+    
+    # Filter out build directories
+    source_files = [f for f in source_files if not f.startswith(('obj/', 'build/', 'target/'))]
+    
+    if not source_files:
+        print(f"No {options['language']} source files found!")
+        return
+    
+    print(f"Found {len(source_files)} source files to analyze...")
+    
+    # Parse structures/classes
+    all_tables = []
+    
+    for file_path in source_files:
+        print(f"Parsing {file_path}...")
+        
+        if options['language'] == 'C':
+            tables = CodeStructureParser.parse_c_structs(file_path)
+        elif options['language'] == 'C++':
+            tables = CodeStructureParser.parse_cpp_classes(file_path)
+        else:  # Java
+            tables = CodeStructureParser.parse_java_classes(file_path)
+        
+        all_tables.extend(tables)
+    
+    if not all_tables:
+        print("No structures/classes found to convert to database schema!")
+        return
+    
+    print(f"Found {len(all_tables)} tables to generate:")
+    for table in all_tables:
+        print(f"  - {table.name} ({len(table.fields)} fields)")
+    
+    # Generate SQL
+    sql_content = SQLGenerator.generate_mysql_schema(all_tables, options['database_name'])
+    
+    # Add sample data if requested
+    if options['include_sample_data']:
+        sql_content += "\n-- Sample INSERT statements\n"
+        for table in all_tables:
+            sample_values = []
+            for field in table.fields:
+                if field.data_type.name.upper() in ['INT', 'BIGINT', 'SMALLINT']:
+                    sample_values.append('1')
+                elif field.data_type.name.upper() in ['VARCHAR', 'TEXT', 'CHAR']:
+                    sample_values.append(f"'sample_{field.name}'")
+                elif field.data_type.name.upper() == 'BOOLEAN':
+                    sample_values.append('TRUE')
+                elif field.data_type.name.upper() in ['FLOAT', 'DOUBLE']:
+                    sample_values.append('1.0')
+                else:
+                    sample_values.append('NULL')
+            
+            field_names = [f.name for f in table.fields]
+            sql_content += f"INSERT INTO `{table.name}` (`{'`, `'.join(field_names)}`) VALUES ({', '.join(sample_values)});\n"
+    
+    # Write to file
+    with open(options['output_file'], 'w') as f:
+        f.write(sql_content)
+    
+    print(f"\nDatabase schema generated successfully!")
+    print(f"Output file: {options['output_file']}")
+    print(f"Database: {options['database_name']}")
+    print(f"Tables: {len(all_tables)}")
+
 
 def get_source_files(lang: str) -> Tuple[List[str], List[str]]:
     """
@@ -1220,7 +1741,8 @@ def main_menu():
         4. Generate advanced Java Makefile - Create enhanced Java Makefile
         5. Start new project - Create project template
         6. Configuration Management - Modify settings
-        7. Exit - Quit the application
+        7. Generate database schema - Generate database schema from code
+        8. Exit - Quit the application
     
     Returns:
         None: Runs until user selects exit option
@@ -1242,7 +1764,8 @@ def main_menu():
         4. Generate advanced Java Makefile
         5. Start new project
         6. Configuration Management
-        7. Exit
+        7. Generate database schema
+        8. Exit
     """
     while True:
         clear_screen()
@@ -1255,7 +1778,8 @@ def main_menu():
         print("4. Generate advanced Java Makefile")
         print("5. Start new project")
         print("6. Configuration Management")
-        print("7. Exit")
+        print("7. Generate database schema")
+        print("8. Exit")
         print("\nChoice: ", end='')
         
         choice = input().strip()
@@ -1319,6 +1843,11 @@ def main_menu():
         elif choice == '6':
             manage_config()
         elif choice == '7':
+            options = get_database_options()
+            generate_database_schema(options)
+            print("\nPress Enter to return to main menu...")
+            input()
+        elif choice == '8':
             clear_screen()
             print("Thank you for using Build System Generator!")
             sys.exit(0)
